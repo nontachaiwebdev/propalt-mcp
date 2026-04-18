@@ -14,16 +14,31 @@ export class InMemoryClientsStore implements OAuthRegisteredClientsStore {
     input: Omit<OAuthClientInformationFull, "client_id" | "client_id_issued_at">,
   ): OAuthClientInformationFull {
     const clientId = `mcp-${randomBytes(16).toString("base64url")}`;
-    const clientSecret = randomBytes(32).toString("base64url");
     const now = Math.floor(Date.now() / 1000);
+
+    const authMethod = input.token_endpoint_auth_method ?? "client_secret_post";
+    const isPublicClient = authMethod === "none";
 
     const client: OAuthClientInformationFull = {
       ...input,
       client_id: clientId,
-      client_secret: clientSecret,
       client_id_issued_at: now,
-      client_secret_expires_at: 0,
+      ...(isPublicClient
+        ? { client_secret: undefined, client_secret_expires_at: undefined }
+        : {
+            client_secret: randomBytes(32).toString("base64url"),
+            client_secret_expires_at: 0,
+          }),
     };
+
+    console.log("[oauth] /register accepted", {
+      clientId,
+      tokenEndpointAuthMethod: authMethod,
+      isPublicClient,
+      redirectUris: input.redirect_uris,
+      grantTypes: input.grant_types,
+      clientName: input.client_name,
+    });
 
     this.store.clients.set(clientId, client);
     return client;
