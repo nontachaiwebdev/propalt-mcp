@@ -28,6 +28,10 @@ const mcpResourceUrl = new URL("/mcp", issuerUrl);
 const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
 
 const app = express();
+// Railway (and most PaaS) puts a reverse proxy in front of the app. Telling Express
+// to trust a single proxy hop lets express-rate-limit (used by the MCP auth router)
+// derive the real client IP from X-Forwarded-For instead of throwing ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "4mb" }));
 
 app.use(
