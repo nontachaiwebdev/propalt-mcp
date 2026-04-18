@@ -45,6 +45,14 @@ export class InMemoryOAuthProvider implements OAuthServerProvider {
       expiresAt: nowSeconds() + AUTH_CODE_TTL_SECONDS,
     });
 
+    console.log("[oauth] authorize issued code", {
+      clientId: client.client_id,
+      redirectUri: params.redirectUri,
+      scopes: params.scopes ?? [],
+      resource: params.resource?.toString(),
+      codeChallengePresent: Boolean(params.codeChallenge),
+    });
+
     const redirect = new URL(params.redirectUri);
     redirect.searchParams.set("code", code);
     if (params.state) redirect.searchParams.set("state", params.state);
@@ -56,31 +64,60 @@ export class InMemoryOAuthProvider implements OAuthServerProvider {
     authorizationCode: string,
   ): Promise<string> {
     const record = this.store.authCodes.get(authorizationCode);
-    if (!record) throw new InvalidGrantError("authorization code not found");
+    if (!record) {
+      console.warn("[oauth] challengeForAuthorizationCode: code not found", {
+        code: authorizationCode.slice(0, 8) + "...",
+        knownCodes: this.store.authCodes.size,
+      });
+      throw new InvalidGrantError("authorization code not found");
+    }
     return record.codeChallenge;
   }
 
   async exchangeAuthorizationCode(
     client: OAuthClientInformationFull,
     authorizationCode: string,
-    _codeVerifier?: string,
+    codeVerifier?: string,
     redirectUri?: string,
     resource?: URL,
   ): Promise<OAuthTokens> {
     const record = this.store.authCodes.get(authorizationCode);
-    if (!record) throw new InvalidGrantError("authorization code not found");
+    if (!record) {
+      console.warn("[oauth] exchangeAuthorizationCode: code not found", {
+        code: authorizationCode.slice(0, 8) + "...",
+        clientId: client.client_id,
+      });
+      throw new InvalidGrantError("authorization code not found");
+    }
 
     this.store.authCodes.delete(authorizationCode);
 
     if (record.expiresAt <= nowSeconds()) {
+      console.warn("[oauth] code expired", { age: nowSeconds() - record.expiresAt });
       throw new InvalidGrantError("authorization code expired");
     }
     if (record.clientId !== client.client_id) {
+      console.warn("[oauth] client_id mismatch", {
+        issuedTo: record.clientId,
+        presenting: client.client_id,
+      });
       throw new InvalidGrantError("authorization code was issued to a different client");
     }
     if (redirectUri && record.redirectUri !== redirectUri) {
+      console.warn("[oauth] redirect_uri mismatch", {
+        registeredAtAuthorize: record.redirectUri,
+        presentedAtToken: redirectUri,
+      });
       throw new InvalidGrantError("redirect_uri mismatch");
     }
+
+    console.log("[oauth] token exchange OK", {
+      clientId: client.client_id,
+      hasVerifier: Boolean(codeVerifier),
+      redirectUri,
+      scopes: record.scopes,
+      resource: resource?.toString(),
+    });
 
     return this.issueTokens(client.client_id, record.scopes, resource?.toString() ?? record.resource);
   }
