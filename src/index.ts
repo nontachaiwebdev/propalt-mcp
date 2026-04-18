@@ -34,6 +34,27 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "4mb" }));
 
+// Diagnostic: log every /token request's shape BEFORE the SDK handles it, and
+// capture any response status the SDK produces. This lets us see exactly what
+// ChatGPT is sending and what we're returning when 400s happen.
+app.use("/token", express.urlencoded({ extended: true }), (req, res, next) => {
+  const body = req.body as Record<string, unknown>;
+  console.log("[oauth] /token incoming", {
+    contentType: req.header("content-type"),
+    hasAuthzHeader: Boolean(req.header("authorization")),
+    grant_type: body?.grant_type,
+    client_id: body?.client_id,
+    has_client_secret: Boolean(body?.client_secret),
+    has_code: Boolean(body?.code),
+    has_code_verifier: Boolean(body?.code_verifier),
+    redirect_uri: body?.redirect_uri,
+  });
+  res.on("finish", () => {
+    console.log("[oauth] /token finished", { status: res.statusCode });
+  });
+  next();
+});
+
 app.use(
   mcpAuthRouter({
     provider: oauthProvider,
@@ -42,6 +63,16 @@ app.use(
     resourceName: "Propalt MCP",
   }),
 );
+
+// Global error logger — catches anything thrown synchronously during request handling.
+app.use((err: Error, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("[oauth] unhandled error:", err.message, err.stack);
+  if (!res.headersSent) {
+    res.status(500).json({ error: "internal_error", message: err.message });
+    return;
+  }
+  next(err);
+});
 
 app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true });

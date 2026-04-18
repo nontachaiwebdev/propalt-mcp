@@ -60,7 +60,7 @@ export class InMemoryOAuthProvider implements OAuthServerProvider {
   }
 
   async challengeForAuthorizationCode(
-    _client: OAuthClientInformationFull,
+    client: OAuthClientInformationFull,
     authorizationCode: string,
   ): Promise<string> {
     const record = this.store.authCodes.get(authorizationCode);
@@ -71,6 +71,12 @@ export class InMemoryOAuthProvider implements OAuthServerProvider {
       });
       throw new InvalidGrantError("authorization code not found");
     }
+    console.log("[oauth] challengeForAuthorizationCode: returned challenge", {
+      code: authorizationCode.slice(0, 8) + "...",
+      clientIdPresenting: client.client_id,
+      clientIdOfCode: record.clientId,
+      challengePrefix: record.codeChallenge.slice(0, 8) + "...",
+    });
     return record.codeChallenge;
   }
 
