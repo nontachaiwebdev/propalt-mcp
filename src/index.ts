@@ -12,16 +12,16 @@ import { createOAuthProvider } from "./oauth/index.js";
 const {
   MCP_BEARER_TOKEN,
   API_BASE_URL,
-  API_KEY,
+  PROPALT_API_KEY,
   PUBLIC_BASE_URL,
   PORT = "3000",
 } = process.env;
 
 if (!API_BASE_URL) throw new Error("API_BASE_URL env var is required");
-if (!API_KEY) throw new Error("API_KEY env var is required");
+if (!PROPALT_API_KEY) throw new Error("PROPALT_API_KEY env var is required");
 if (!PUBLIC_BASE_URL) throw new Error("PUBLIC_BASE_URL env var is required");
 
-const api = new ApiClient(API_BASE_URL, API_KEY);
+const api = new ApiClient(API_BASE_URL, PROPALT_API_KEY);
 const oauthProvider = createOAuthProvider();
 const issuerUrl = new URL(PUBLIC_BASE_URL);
 const mcpResourceUrl = new URL("/mcp", issuerUrl);

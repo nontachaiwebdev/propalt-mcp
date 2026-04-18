@@ -1,6 +1,6 @@
 # gpt-mcp
 
-Remote MCP server that exposes `search` and `fetch` tools to ChatGPT deep research and Claude.ai. Wraps the **Propalt middlelayer API** (UK property data — address lookup + full property records) and ships with OAuth 2.1 (for Claude.ai) plus optional static-bearer auth (for ChatGPT). Designed to deploy on Railway.
+Remote MCP server that exposes the full **Propalt API** (UK property data — 24 endpoints covering address lookup, property details, comparables, valuations, market analytics, audiences, and more) as MCP tools for Claude.ai and other MCP clients. Ships with OAuth 2.1 (for Claude.ai) plus optional static-bearer auth. Designed to deploy on Railway.
 
 ## Stack
 
@@ -23,7 +23,7 @@ OAuth clients and tokens are stored **in memory**, so a Railway redeploy wipes t
 ```bash
 npm install
 cp .env.example .env
-# fill in PUBLIC_BASE_URL (http://localhost:3000 for local), API_BASE_URL, API_KEY
+# fill in PUBLIC_BASE_URL (http://localhost:3000 for local), API_BASE_URL (https://api.propalt.io), PROPALT_API_KEY
 # optional: MCP_BEARER_TOKEN for ChatGPT-style access
 npm run dev
 ```
@@ -44,8 +44,8 @@ Point it at `http://localhost:3000/mcp`. The inspector can drive the full OAuth 
 2. In Railway: **New Project → Deploy from GitHub repo**.
 3. Set environment variables:
    - `PUBLIC_BASE_URL` — `https://<name>.up.railway.app` (no trailing slash)
-   - `API_BASE_URL` — `https://api.propalt.co.uk`
-   - `API_KEY` — your Propalt bearer token
+   - `API_BASE_URL` — `https://api.propalt.io`
+   - `PROPALT_API_KEY` — your Propalt bearer token
    - `MCP_BEARER_TOKEN` — *(optional)* static token for ChatGPT
 4. Railway auto-detects Node via Nixpacks; `railway.json` pins build/start and `/health`.
 5. MCP URL: `https://<name>.up.railway.app/mcp`
@@ -68,24 +68,21 @@ Point it at `http://localhost:3000/mcp`. The inspector can drive the full OAuth 
 
 ## Upstream API
 
-All Propalt-specific logic lives in [src/api-client.ts](src/api-client.ts):
+The server wraps 24 endpoints from the Propalt API at `https://api.propalt.io` — see [api.json](api.json) for the full OpenAPI spec. Each endpoint is exposed as an individual MCP tool under [src/tools/](src/tools/).
 
-- `search(query)` → `GET /middlelayer/addresses/lookup?keyword=...`, returns up to 10 address matches
-- `fetch(id)` → `GET /middlelayer/property/{id}`, returns a human-readable property summary with the full raw record in `metadata`
+[src/api-client.ts](src/api-client.ts) exposes a single generic `request(method, path, { query, body })` method that handles `Authorization: Bearer <PROPALT_API_KEY>`, a 10s timeout, and upstream error formatting. Each tool calls it with a hard-coded method + path.
 
-To point this server at a different upstream, edit `api-client.ts` only — the MCP server, tool handlers, and HTTP/auth layers stay untouched.
+To point this server at a different upstream base, change `API_BASE_URL` — the tool files and auth layer stay untouched.
 
 ## File layout
 
 ```
 src/
 ├── index.ts            Express app: /health, /mcp, mounts OAuth router
-├── server.ts           MCP server factory + tool registration
+├── server.ts           MCP server factory: registers all 24 Propalt tools
 ├── auth.ts             dualAuth middleware (legacy bearer OR OAuth token)
-├── api-client.ts       Propalt REST adapter
-├── tools/
-│   ├── search.ts       ChatGPT deep-research "search" tool
-│   └── fetch.ts        ChatGPT deep-research "fetch" tool
+├── api-client.ts       Generic Propalt REST client (one request() method)
+├── tools/              One file per endpoint (24 tools)
 └── oauth/
     ├── index.ts        createOAuthProvider() factory
     ├── provider.ts     OAuthServerProvider implementation
