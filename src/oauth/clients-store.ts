@@ -1,46 +1,42 @@
-import { randomBytes } from "node:crypto";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
-import type { OAuthStore } from "./store.js";
+import type { ClientEntry } from "./client-entries.js";
 
-export class InMemoryClientsStore implements OAuthRegisteredClientsStore {
-  constructor(private readonly store: OAuthStore) {}
+export class StaticClientsStore implements OAuthRegisteredClientsStore {
+  private readonly clients = new Map<string, OAuthClientInformationFull>();
+  private readonly prefixes = new Map<string, string[]>();
 
-  getClient(clientId: string): OAuthClientInformationFull | undefined {
-    return this.store.clients.get(clientId);
+  constructor(entries: ClientEntry[]) {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    for (const e of entries) {
+      const isPublic = e.token_endpoint_auth_method === "none";
+      this.clients.set(e.client_id, {
+        client_id: e.client_id,
+        client_id_issued_at: issuedAt,
+        client_secret: isPublic ? undefined : e.client_secret,
+        client_secret_expires_at: isPublic ? undefined : 0,
+        redirect_uris: e.redirect_uris,
+        token_endpoint_auth_method: e.token_endpoint_auth_method,
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        client_name: e.client_name,
+        scope: e.scopes.length > 0 ? e.scopes.join(" ") : undefined,
+      });
+      if (e.redirect_uri_prefixes && e.redirect_uri_prefixes.length > 0) {
+        this.prefixes.set(e.client_id, e.redirect_uri_prefixes);
+      }
+    }
   }
 
-  registerClient(
-    input: Omit<OAuthClientInformationFull, "client_id" | "client_id_issued_at">,
-  ): OAuthClientInformationFull {
-    const clientId = `mcp-${randomBytes(16).toString("base64url")}`;
-    const now = Math.floor(Date.now() / 1000);
+  getClient(clientId: string): OAuthClientInformationFull | undefined {
+    return this.clients.get(clientId);
+  }
 
-    const authMethod = input.token_endpoint_auth_method ?? "client_secret_post";
-    const isPublicClient = authMethod === "none";
+  getPrefixes(clientId: string): string[] {
+    return this.prefixes.get(clientId) ?? [];
+  }
 
-    const client: OAuthClientInformationFull = {
-      ...input,
-      client_id: clientId,
-      client_id_issued_at: now,
-      ...(isPublicClient
-        ? { client_secret: undefined, client_secret_expires_at: undefined }
-        : {
-            client_secret: randomBytes(32).toString("base64url"),
-            client_secret_expires_at: 0,
-          }),
-    };
-
-    console.log("[oauth] /register accepted", {
-      clientId,
-      tokenEndpointAuthMethod: authMethod,
-      isPublicClient,
-      redirectUris: input.redirect_uris,
-      grantTypes: input.grant_types,
-      clientName: input.client_name,
-    });
-
-    this.store.clients.set(clientId, client);
-    return client;
+  size(): number {
+    return this.clients.size;
   }
 }

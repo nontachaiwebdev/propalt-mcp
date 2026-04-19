@@ -13,7 +13,7 @@ import type {
   OAuthClientInformationFull,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { InMemoryClientsStore } from "./clients-store.js";
+import { StaticClientsStore } from "./clients-store.js";
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   AUTH_CODE_TTL_SECONDS,
@@ -23,10 +23,13 @@ import {
 } from "./store.js";
 
 export class InMemoryOAuthProvider implements OAuthServerProvider {
-  readonly clientsStore: InMemoryClientsStore;
+  readonly clientsStore: StaticClientsStore;
 
-  constructor(private readonly store: OAuthStore) {
-    this.clientsStore = new InMemoryClientsStore(store);
+  constructor(
+    private readonly store: OAuthStore,
+    clientsStore: StaticClientsStore,
+  ) {
+    this.clientsStore = clientsStore;
   }
 
   async authorize(

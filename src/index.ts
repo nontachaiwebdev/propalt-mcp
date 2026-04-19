@@ -4,10 +4,11 @@ import {
   getOAuthProtectedResourceMetadataUrl,
   mcpAuthRouter,
 } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { redirectUriMatches } from "@modelcontextprotocol/sdk/server/auth/handlers/authorize.js";
 import { ApiClient } from "./api-client.js";
 import { createMcpServer } from "./server.js";
 import { dualAuth } from "./auth.js";
-import { createOAuthProvider } from "./oauth/index.js";
+import { createOAuthProvider, loadClientEntries } from "./oauth/index.js";
 
 const {
   MCP_BEARER_TOKEN,
@@ -21,22 +22,27 @@ if (!API_BASE_URL) throw new Error("API_BASE_URL env var is required");
 if (!PROPALT_API_KEY) throw new Error("PROPALT_API_KEY env var is required");
 if (!PUBLIC_BASE_URL) throw new Error("PUBLIC_BASE_URL env var is required");
 
+const clientEntries = loadClientEntries();
+if (clientEntries.length === 0 && !MCP_BEARER_TOKEN) {
+  throw new Error(
+    "No auth path configured: set MCP_CLIENTS_JSON (or MCP_CLIENTS_FILE) and/or MCP_BEARER_TOKEN",
+  );
+}
+console.log(
+  `[oauth] loaded ${clientEntries.length} pre-issued OAuth client(s)` +
+    (MCP_BEARER_TOKEN ? " (legacy MCP_BEARER_TOKEN also enabled)" : ""),
+);
+
 const api = new ApiClient(API_BASE_URL, PROPALT_API_KEY);
-const oauthProvider = createOAuthProvider();
+const oauthProvider = createOAuthProvider(clientEntries);
 const issuerUrl = new URL(PUBLIC_BASE_URL);
 const mcpResourceUrl = new URL("/mcp", issuerUrl);
 const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
 
 const app = express();
-// Railway (and most PaaS) puts a reverse proxy in front of the app. Telling Express
-// to trust a single proxy hop lets express-rate-limit (used by the MCP auth router)
-// derive the real client IP from X-Forwarded-For instead of throwing ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "4mb" }));
 
-// Diagnostic: log every /token request's shape BEFORE the SDK handles it, and
-// capture any response status the SDK produces. This lets us see exactly what
-// ChatGPT is sending and what we're returning when 400s happen.
 app.use("/token", express.urlencoded({ extended: true }), (req, res, next) => {
   const body = req.body as Record<string, unknown>;
   console.log("[oauth] /token incoming", {
@@ -55,6 +61,103 @@ app.use("/token", express.urlencoded({ extended: true }), (req, res, next) => {
   next();
 });
 
+// Custom /authorize handler. Mounted BEFORE mcpAuthRouter so Express dispatches
+// it first; the SDK's authorize handler is shadowed. Adds host-locked prefix
+// matching for redirect_uris (needed for ChatGPT's per-connector dynamic
+// callback https://chatgpt.com/connector/oauth/{id}).
+app.all("/authorize", express.urlencoded({ extended: false }), async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const params = (req.method === "POST" ? req.body : req.query) as Record<string, string | undefined>;
+
+  const clientId = params.client_id;
+  if (!clientId || typeof clientId !== "string") {
+    res.status(400).json({ error: "invalid_request", error_description: "client_id is required" });
+    return;
+  }
+
+  const client = oauthProvider.clientsStore.getClient(clientId);
+  if (!client) {
+    res.status(400).json({ error: "invalid_client", error_description: "Invalid client_id" });
+    return;
+  }
+
+  let redirectUri = typeof params.redirect_uri === "string" ? params.redirect_uri : undefined;
+  if (redirectUri !== undefined && !URL.canParse(redirectUri)) {
+    res.status(400).json({ error: "invalid_request", error_description: "redirect_uri must be a valid URL" });
+    return;
+  }
+
+  if (redirectUri === undefined) {
+    if (client.redirect_uris.length === 1) {
+      redirectUri = client.redirect_uris[0];
+    } else {
+      res.status(400).json({
+        error: "invalid_request",
+        error_description: "redirect_uri must be specified when client has multiple registered URIs",
+      });
+      return;
+    }
+  } else {
+    const exactOk = client.redirect_uris.some((registered) => redirectUriMatches(redirectUri!, registered));
+    const prefixes = oauthProvider.clientsStore.getPrefixes(clientId);
+    const prefixOk = prefixes.some((prefix) => {
+      try {
+        return new URL(redirectUri!).origin === new URL(prefix).origin && redirectUri!.startsWith(prefix);
+      } catch {
+        return false;
+      }
+    });
+    if (!exactOk && !prefixOk) {
+      res.status(400).json({ error: "invalid_request", error_description: "Unregistered redirect_uri" });
+      return;
+    }
+  }
+
+  const responseType = params.response_type;
+  const codeChallenge = params.code_challenge;
+  const codeChallengeMethod = params.code_challenge_method;
+
+  if (responseType !== "code") {
+    redirectWithError(res, redirectUri, "unsupported_response_type", "response_type must be 'code'", params.state);
+    return;
+  }
+  if (!codeChallenge || typeof codeChallenge !== "string") {
+    redirectWithError(res, redirectUri, "invalid_request", "code_challenge is required", params.state);
+    return;
+  }
+  if (codeChallengeMethod !== "S256") {
+    redirectWithError(res, redirectUri, "invalid_request", "code_challenge_method must be 'S256'", params.state);
+    return;
+  }
+
+  const scope = typeof params.scope === "string" ? params.scope : undefined;
+  const state = typeof params.state === "string" ? params.state : undefined;
+  const resource = typeof params.resource === "string" ? params.resource : undefined;
+  if (resource !== undefined && !URL.canParse(resource)) {
+    redirectWithError(res, redirectUri, "invalid_request", "resource must be a valid URL", state);
+    return;
+  }
+
+  try {
+    await oauthProvider.authorize(
+      client,
+      {
+        state,
+        scopes: scope ? scope.split(" ").filter(Boolean) : [],
+        redirectUri,
+        codeChallenge,
+        resource: resource ? new URL(resource) : undefined,
+      },
+      res,
+    );
+  } catch (err) {
+    console.error("[oauth] custom /authorize failed:", (err as Error).message);
+    if (!res.headersSent) {
+      redirectWithError(res, redirectUri, "server_error", "internal error", state);
+    }
+  }
+});
+
 app.use(
   mcpAuthRouter({
     provider: oauthProvider,
@@ -64,7 +167,6 @@ app.use(
   }),
 );
 
-// Global error logger — catches anything thrown synchronously during request handling.
 app.use((err: Error, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error("[oauth] unhandled error:", err.message, err.stack);
   if (!res.headersSent) {
@@ -117,3 +219,21 @@ const port = Number.parseInt(PORT, 10);
 app.listen(port, () => {
   console.log(`gpt-mcp listening on :${port} (POST /mcp, issuer=${issuerUrl.toString()})`);
 });
+
+function redirectWithError(
+  res: express.Response,
+  redirectUri: string | undefined,
+  code: string,
+  description: string,
+  state: string | undefined,
+): void {
+  if (!redirectUri) {
+    res.status(400).json({ error: code, error_description: description });
+    return;
+  }
+  const url = new URL(redirectUri);
+  url.searchParams.set("error", code);
+  url.searchParams.set("error_description", description);
+  if (state) url.searchParams.set("state", state);
+  res.redirect(url.toString());
+}
