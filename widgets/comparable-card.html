@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Comparable Properties</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #111;
+        --fg-muted: #555;
+        --border: #e5e7eb;
+        --bg: #ffffff;
+        --bg-muted: #f7f7f8;
+        --accent: #10b981;
+        --accent-fg: #052e1f;
+        --badge-sold: #f3f4f6;
+        --badge-sold-fg: #374151;
+        --radius: 12px;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #f3f4f6;
+          --fg-muted: #9ca3af;
+          --border: #262626;
+          --bg: #0b0b0c;
+          --bg-muted: #171717;
+          --badge-sold: #262626;
+          --badge-sold-fg: #d1d5db;
+          --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.4);
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: var(--fg);
+        background: transparent;
+      }
+      .wrap { padding: 12px 4px 4px; }
+      .header {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 4px 12px;
+      }
+      .sub {
+        font-size: 12px;
+        color: var(--fg-muted);
+        font-weight: 400;
+        margin-left: 6px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        box-shadow: var(--shadow);
+      }
+      .thumb {
+        position: relative;
+        aspect-ratio: 4 / 3;
+        background: var(--bg-muted);
+        overflow: hidden;
+      }
+      .thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .badge {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        background: var(--badge-sold);
+        color: var(--badge-sold-fg);
+        font-size: 11px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 999px;
+        letter-spacing: 0.02em;
+      }
+      .badge.live { background: var(--accent); color: var(--accent-fg); }
+      .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+      .price { font-size: 17px; font-weight: 700; }
+      .meta {
+        display: flex;
+        gap: 10px;
+        color: var(--fg-muted);
+        font-size: 12px;
+      }
+      .meta span { display: inline-flex; align-items: center; gap: 4px; }
+      .addr {
+        font-size: 12px;
+        color: var(--fg-muted);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .empty {
+        padding: 24px;
+        text-align: center;
+        color: var(--fg-muted);
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div id="root"></div>
+    </div>
+    <script>
+      (function () {
+        const root = document.getElementById("root");
+
+        function fmtPrice(v) {
+          if (v == null || Number.isNaN(Number(v))) return "";
+          return "£" + Number(v).toLocaleString("en-GB", { maximumFractionDigits: 0 });
+        }
+
+        function statusLabel(code) {
+          switch (Number(code)) {
+            case 1: return { text: "For sale", live: true };
+            case 2: return { text: "Reduced", live: true };
+            case 3: return { text: "Sold/Let", live: false };
+            case 4: return { text: "Archived", live: false };
+            default: return null;
+          }
+        }
+
+        function esc(s) {
+          return String(s ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+        }
+
+        function cardHtml(c) {
+          const status = statusLabel(c.current_status);
+          const badge = status
+            ? `<div class="badge ${status.live ? "live" : ""}">${esc(status.text)}</div>`
+            : "";
+          const img = c.image_url
+            ? `<img src="${esc(c.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+            : "";
+          const beds = c.num_beds != null ? `<span>🛏 ${esc(c.num_beds)}</span>` : "";
+          const baths = c.number_of_bathrooms != null ? `<span>🛁 ${esc(c.number_of_bathrooms)}</span>` : "";
+          const dist = c.distance != null ? `<span>📍 ${Number(c.distance).toFixed(2)} km</span>` : "";
+          return `
+            <div class="card">
+              <div class="thumb">${img}${badge}</div>
+              <div class="body">
+                <div class="price">${esc(fmtPrice(c.price))}</div>
+                <div class="meta">${beds}${baths}${dist}</div>
+                <div class="addr">${esc(c.address1 || c.postcode || "")}</div>
+              </div>
+            </div>
+          `;
+        }
+
+        function render() {
+          const out = (window.openai && window.openai.toolOutput) || {};
+          const list = Array.isArray(out.similar_comparable_properties)
+            ? out.similar_comparable_properties
+            : [];
+          const subject = out.subject_property_feature || {};
+          const near = subject.postcode ? ` near ${esc(subject.postcode)}` : "";
+
+          if (list.length === 0) {
+            root.innerHTML = `<div class="empty">No comparable properties returned.</div>`;
+            return;
+          }
+
+          root.innerHTML = `
+            <div class="header">Showing ${list.length} comparable properties${near}</div>
+            <div class="grid">${list.map(cardHtml).join("")}</div>
+          `;
+        }
+
+        render();
+
+        // Re-render when the host pushes a new tool output (e.g. on remount).
+        window.addEventListener("openai:set_globals", render);
+        window.addEventListener("openai:tool_output", render);
+      })();
+    </script>
+  </body>
+</html>

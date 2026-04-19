@@ -120,12 +120,18 @@ import {
   getValuationByPropertyIdDescription,
   makeGetValuationByPropertyIdHandler,
 } from "./tools/get-valuation-by-property-id.js";
+import {
+  registerComparableCardWidget,
+  COMPARABLE_CARD_URI,
+} from "./widgets/comparable-card.js";
 
 export function createMcpServer(api: ApiClient): McpServer {
   const server = new McpServer(
     { name: "gpt-mcp", version: "1.0.0" },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {} } },
   );
+
+  registerComparableCardWidget(server);
 
   server.registerTool(
     "audience_selling_property",
@@ -353,6 +359,11 @@ export function createMcpServer(api: ApiClient): McpServer {
       title: "Get Comparable Properties By Property ID",
       description: getComparableByPropertyIdDescription,
       inputSchema: getComparableByPropertyIdInputSchema,
+      _meta: {
+        "openai/outputTemplate": COMPARABLE_CARD_URI,
+        "openai/toolInvocation/invoking": "Finding comparable properties…",
+        "openai/toolInvocation/invoked": "Found comparable properties.",
+      },
     },
     makeGetComparableByPropertyIdHandler(api),
   );
