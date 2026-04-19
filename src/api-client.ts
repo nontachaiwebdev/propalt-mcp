@@ -56,9 +56,29 @@ export class ApiClient {
 
     if (!res.ok) {
       const snippet = (await res.text().catch(() => "")).slice(0, 500);
-      throw new Error(`Upstream ${res.status} ${res.statusText}: ${snippet}`);
+      const err = new UpstreamError(res.status, res.statusText, snippet);
+      console.error("[upstream] error", {
+        status: res.status,
+        statusText: res.statusText,
+        path,
+        body: snippet,
+      });
+      throw err;
     }
 
     return (await res.json()) as unknown;
+  }
+}
+
+export class UpstreamError extends Error {
+  readonly status: number;
+  readonly statusText: string;
+  readonly upstreamBody: string;
+  constructor(status: number, statusText: string, upstreamBody: string) {
+    super(`Upstream ${status} ${statusText}`);
+    this.name = "UpstreamError";
+    this.status = status;
+    this.statusText = statusText;
+    this.upstreamBody = upstreamBody;
   }
 }

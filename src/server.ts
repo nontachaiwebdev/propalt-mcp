@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ApiClient } from "./api-client.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import { ApiClient, UpstreamError } from "./api-client.js";
 import {
   audienceSellingPropertyInputSchema,
   audienceSellingPropertyDescription,
@@ -121,9 +122,73 @@ import {
   makeGetValuationByPropertyIdHandler,
 } from "./tools/get-valuation-by-property-id.js";
 import {
+  searchInputSchema,
+  searchDescription,
+  makeSearchHandler,
+} from "./tools/search.js";
+import {
+  fetchInputSchema,
+  fetchDescription,
+  makeFetchHandler,
+} from "./tools/fetch.js";
+import {
   registerComparableCardWidget,
   COMPARABLE_CARD_URI,
 } from "./widgets/comparable-card.js";
+
+const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+};
+
+type AnyToolHandler = (input: any) => Promise<unknown>;
+
+function safeHandler(name: string, handler: AnyToolHandler): AnyToolHandler {
+  return async (input: unknown) => {
+    try {
+      return await handler(input);
+    } catch (err) {
+      console.error(`[tool:${name}] failed`, err);
+      const userMessage =
+        err instanceof UpstreamError
+          ? "Upstream service returned an error. Please try again or refine your query."
+          : err instanceof Error && /^Invalid /.test(err.message)
+            ? err.message
+            : "Tool execution failed.";
+      return {
+        content: [{ type: "text" as const, text: userMessage }],
+        isError: true,
+      };
+    }
+  };
+}
+
+interface ToolConfig {
+  title: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+}
+
+function registerReadOnlyTool(
+  server: McpServer,
+  name: string,
+  config: ToolConfig,
+  handler: AnyToolHandler,
+) {
+  const registrationConfig: Record<string, unknown> = {
+    title: config.title,
+    description: config.description,
+    inputSchema: config.inputSchema,
+    annotations: { ...READ_ONLY_ANNOTATIONS, title: config.title },
+  };
+  if (config._meta) registrationConfig._meta = config._meta;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server.registerTool as any)(name, registrationConfig, safeHandler(name, handler));
+}
 
 export function createMcpServer(api: ApiClient): McpServer {
   const server = new McpServer(
@@ -133,7 +198,30 @@ export function createMcpServer(api: ApiClient): McpServer {
 
   registerComparableCardWidget(server);
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
+    "search",
+    {
+      title: "Search",
+      description: searchDescription,
+      inputSchema: searchInputSchema,
+    },
+    makeSearchHandler(api),
+  );
+
+  registerReadOnlyTool(
+    server,
+    "fetch",
+    {
+      title: "Fetch",
+      description: fetchDescription,
+      inputSchema: fetchInputSchema,
+    },
+    makeFetchHandler(api),
+  );
+
+  registerReadOnlyTool(
+    server,
     "audience_selling_property",
     {
       title: "Audience Selling Property",
@@ -143,7 +231,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeAudienceSellingPropertyHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "audience_letting_property",
     {
       title: "Audience Letting Property",
@@ -153,7 +242,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeAudienceLettingPropertyHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "audience_landlords",
     {
       title: "Audience Landlords",
@@ -163,7 +253,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeAudienceLandlordsHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "address_lookup",
     {
       title: "Address Lookup",
@@ -173,7 +264,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeAddressLookupHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "street_lookup",
     {
       title: "Street Lookup",
@@ -183,7 +275,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeStreetLookupHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_place",
     {
       title: "Get Place Data",
@@ -193,7 +286,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetPlaceHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_nearby_school",
     {
       title: "Get Nearby Schools",
@@ -203,7 +297,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetNearbySchoolHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_brandboard",
     {
       title: "Get Broadband Data",
@@ -213,7 +308,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetBrandboardHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_property",
     {
       title: "Get Property Detail",
@@ -223,7 +319,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetPropertyHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_epc_fabric_by_property_id",
     {
       title: "Get EPC Fabric By Property ID",
@@ -233,7 +330,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetEpcFabricByPropertyIdHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_epc_fabric_by_postcode",
     {
       title: "Get EPC Fabric By Postcode",
@@ -243,7 +341,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetEpcFabricByPostcodeHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_properties_v2",
     {
       title: "Get Properties V2",
@@ -253,7 +352,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetPropertiesV2Handler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_analysis_data",
     {
       title: "Get Regional Analysis",
@@ -263,7 +363,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetAnalysisDataHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_quarterly_market_analysis",
     {
       title: "Get Quarterly Market Analysis",
@@ -273,7 +374,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetQuarterlyMarketAnalysisHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_monthly_market_analysis",
     {
       title: "Get Monthly Market Analysis",
@@ -283,7 +385,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetMonthlyMarketAnalysisHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_distribution_graph_data",
     {
       title: "Get Price Distribution",
@@ -293,7 +396,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetDistributionGraphDataHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_hpi",
     {
       title: "Get House Price Index",
@@ -303,7 +407,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetHpiHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_sold_properties",
     {
       title: "Get Sold Properties",
@@ -313,7 +418,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetSoldPropertiesHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_property_history",
     {
       title: "Get Property History",
@@ -323,7 +429,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetPropertyHistoryHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_leaseholds",
     {
       title: "Get Leaseholds",
@@ -333,7 +440,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetLeaseholdsHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_agent",
     {
       title: "Get Agent",
@@ -343,7 +451,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetAgentHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_comparable",
     {
       title: "Get Comparable Properties",
@@ -353,7 +462,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetComparableHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_comparable_by_property_id",
     {
       title: "Get Comparable Properties By Property ID",
@@ -368,7 +478,8 @@ export function createMcpServer(api: ApiClient): McpServer {
     makeGetComparableByPropertyIdHandler(api),
   );
 
-  server.registerTool(
+  registerReadOnlyTool(
+    server,
     "get_valuation_by_property_id",
     {
       title: "Get Valuation By Property ID",
